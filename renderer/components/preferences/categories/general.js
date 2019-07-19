@@ -66,7 +66,7 @@ class General extends React.Component {
 
     const kapturesDirPath = tildify(kapturesDir);
     const tabIndex = category === 'general' ? 0 : -1;
-    const fpsOptions = [{label: '30 FPS', value: false}, {label: '60 FPS', value: true}];
+    const fpsOptions = [{label: '10 FPS', value: false}, {label: '15 FPS', value: false}, {label: '30 FPS', value: false}, {label: '60 FPS', value: true}];
 
     return (
       <Category>
@@ -163,8 +163,19 @@ class General extends React.Component {
             onSelect={setAudioInputDeviceId}/>
         </Item>
         <Item
-          key="record60fps"
+          key="capturefps"
           title="Capture frame rate"
+          subtitle="Increased FPS impacts performance and file size"
+        >
+          <Select
+            tabIndex={tabIndex}
+            options={fpsOptions}
+            selected={record60fps}
+            onSelect={value => toggleSetting('record60fps', value)}/>
+        </Item>
+        <Item
+          key="playbackfps"
+          title="Playback frame rate"
           subtitle="Increased FPS impacts performance and file size"
         >
           <Select
