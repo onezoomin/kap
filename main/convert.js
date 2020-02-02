@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const execa = require('execa');
 const moment = require('moment');
+const prettyMs = require('pretty-ms');
 const tmp = require('tmp');
 const ffmpeg = require('@ffmpeg-installer/ffmpeg');
 const util = require('electron-util');
@@ -13,8 +14,8 @@ const tempy = require('tempy');
 const {track} = require('./common/analytics');
 
 const ffmpegPath = util.fixPathForAsarUnpack(ffmpeg.path);
-const durationRegex = /Duration: (\d\d:\d\d:\d\d.\d\d)/gm;
-const frameRegex = /frame=\s+(\d+)/gm;
+const timeRegex = /time=\s*(\d\d:\d\d:\d\d.\d\d)/gm;
+const speedRegex = /speed=\s*(-?\d+(,\d+)*(\.\d+(e\d+)?)?)/gm;
 
 // https://trac.ffmpeg.org/ticket/309
 const makeEven = n => 2 * Math.round(n / 2);
@@ -24,7 +25,8 @@ const convert = (outputPath, opts, args) => {
 
   return new PCancelable((resolve, reject, onCancel) => {
     const converter = execa(ffmpegPath, args);
-    let amountOfFrames;
+    const durationMs = moment.duration(opts.endTime - opts.startTime, 'seconds').asMilliseconds();
+    let speed;
 
     onCancel(() => {
       track('file/export/convert/canceled');
@@ -37,14 +39,26 @@ const convert = (outputPath, opts, args) => {
       stderr += data;
 
       data = data.trim();
-      const matchesDuration = durationRegex.exec(data);
-      const matchesFrame = frameRegex.exec(data);
 
-      if (matchesDuration) {
-        amountOfFrames = Math.ceil(moment.duration(matchesDuration[1]).asSeconds() * 30);
-      } else if (matchesFrame) {
-        const currentFrame = matchesFrame[1];
-        opts.onProgress(currentFrame / amountOfFrames);
+      const processingSpeed = speedRegex.exec(data);
+
+      if (processingSpeed) {
+        speed = parseFloat(processingSpeed[1]);
+      }
+
+      const timeProccessed = timeRegex.exec(data);
+
+      if (timeProccessed) {
+        const processedMs = moment.duration(timeProccessed[1]).asMilliseconds();
+        const progress = processedMs / durationMs;
+
+        // Wait 2 second in the conversion for the speed to be stable
+        if (processedMs > 2 * 1000) {
+          const msRemaining = (durationMs - processedMs) / speed;
+          opts.onProgress(progress, prettyMs(Math.max(msRemaining, 1000), {compact: true}).substr(1));
+        } else {
+          opts.onProgress(progress);
+        }
       }
     });
 
@@ -150,6 +164,8 @@ const convertToApng = opts => {
 const convertToGif = PCancelable.fn(async (opts, onCancel) => {
   const palettePath = tmp.tmpNameSync({postfix: '.png'});
   const paletteProcessor = execa(ffmpegPath, [
+    '-ss', opts.startTime,
+    '-to', opts.endTime,
     '-i', opts.inputPath,
     '-vf', `fps=${opts.fps},scale=${opts.width}:${opts.height}:flags=lanczos,palettegen`,
     palettePath
@@ -182,6 +198,11 @@ const converters = new Map([
 const convertTo = (opts, format) => {
   const outputPath = path.join(tempy.directory(), opts.defaultFileName);
   const converter = converters.get(format);
+
+  if (!converter) {
+    throw new Error(`Unsupported file format: ${format}`);
+  }
+
   opts.onProgress(0);
   track(`file/export/format/${format}`);
 

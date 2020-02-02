@@ -1,9 +1,8 @@
 /* eslint-disable array-element-newline */
 'use strict';
-const {dialog, BrowserWindow} = require('electron');
+const {dialog, BrowserWindow, app} = require('electron');
 const fs = require('fs');
 const {dirname} = require('path');
-const pify = require('pify');
 const {ipcMain: ipc} = require('electron-better-ipc');
 const base64Img = require('base64-img');
 const tmp = require('tmp');
@@ -20,9 +19,9 @@ const {getExportsWindow, openExportsWindow} = require('./exports');
 const {openEditorWindow} = require('./editor');
 const {toggleExportMenuItem} = require('./menus');
 const Export = require('./export');
+const {ensureDockIsShowingSync} = require('./utils/dock');
 
 const ffmpegPath = util.fixPathForAsarUnpack(ffmpeg.path);
-const showSaveDialog = pify(dialog.showSaveDialog, {errorFirst: false});
 let lastSavedDirectory;
 
 const filterMap = new Map([
@@ -61,7 +60,7 @@ const getDragIcon = async inputPath => {
 const saveSnapshot = async ({inputPath, time}) => {
   const now = moment();
 
-  const outputPath = await showSaveDialog(BrowserWindow.getFocusedWindow(), {
+  const {filePath: outputPath} = await dialog.showSaveDialog(BrowserWindow.getFocusedWindow(), {
     defaultPath: `Snapshot ${now.format('YYYY-MM-DD')} at ${now.format('H.mm.ss')}.jpg`
   });
 
@@ -88,6 +87,7 @@ class ExportList {
 
     this.currentExport = this.queue.shift();
     if (this.currentExport.canceled) {
+      delete this.currentExport;
       this._startNext();
       return;
     }
@@ -128,7 +128,7 @@ class ExportList {
     const newExport = new Export(options);
     const createdAt = (new Date()).toISOString();
 
-    if (options.isDefault) {
+    if (options.plugin.pluginName === '_saveToDisk') {
       const wasExportsWindowOpen = Boolean(getExportsWindow());
       const exportsWindow = await openExportsWindow();
       const kapturesDir = settings.get('kapturesDir');
@@ -136,7 +136,7 @@ class ExportList {
 
       const filters = filterMap.get(options.format);
 
-      const filePath = await showSaveDialog(exportsWindow, {
+      const {filePath} = await dialog.showSaveDialog(exportsWindow, {
         title: newExport.defaultFileName,
         defaultPath: `${lastSavedDirectory || kapturesDir}/${newExport.defaultFileName}`,
         filters
@@ -152,10 +152,12 @@ class ExportList {
 
         return;
       }
+    } else if (options.plugin.pluginName === '_openWith') {
+      newExport.context.appUrl = options.openWithApp.url;
     }
 
-    if (!newExport.plugin.isConfigValid()) {
-      const result = dialog.showMessageBox({
+    if (!newExport.config.isConfigValid()) {
+      const result = dialog.showMessageBoxSync({
         type: 'error',
         buttons: ['Configure', 'Cancel'],
         defaultId: 0,
@@ -261,4 +263,28 @@ const callExportsWindow = (channel, data) => {
 
 module.exports = () => {
   exportList = new ExportList();
+
+  app.on('before-quit', event => {
+    if (exportList.currentExport) {
+      openExportsWindow();
+
+      ensureDockIsShowingSync(() => {
+        const buttonIndex = dialog.showMessageBoxSync({
+          type: 'question',
+          buttons: [
+            'Continue',
+            'Quit'
+          ],
+          defaultId: 0,
+          cancelId: 1,
+          message: 'Do you want to continue exporting?',
+          detail: 'Kap is currently exporting files. If you quit, the export task will be canceled.'
+        });
+
+        if (buttonIndex === 0) {
+          event.preventDefault();
+        }
+      });
+    }
+  });
 };

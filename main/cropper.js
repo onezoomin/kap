@@ -4,9 +4,11 @@ const electron = require('electron');
 const delay = require('delay');
 
 const settings = require('./common/settings');
+const {hasMicrophoneAccess, ensureMicrophonePermissions, openSystemPreferences, ensureScreenCapturePermissions} = require('./common/system-permissions');
 const loadRoute = require('./utils/routes');
+const {checkForAnyBlockingEditors} = require('./editor');
 
-const {BrowserWindow, systemPreferences} = electron;
+const {BrowserWindow, systemPreferences, dialog} = electron;
 
 const croppers = new Map();
 let notificationId = null;
@@ -79,8 +81,46 @@ const openCropper = (display, activeDisplayId) => {
   return cropper;
 };
 
-const openCropperWindow = () => {
+const openCropperWindow = async () => {
   closeAllCroppers();
+  if (checkForAnyBlockingEditors()) {
+    return;
+  }
+
+  if (!ensureScreenCapturePermissions()) {
+    return;
+  }
+
+  const recordAudio = settings.get('recordAudio');
+
+  if (recordAudio && !hasMicrophoneAccess()) {
+    const granted = await ensureMicrophonePermissions(async () => {
+      const {response} = await dialog.showMessageBox({
+        type: 'warning',
+        buttons: ['Open System Preferences', 'Continue'],
+        defaultId: 1,
+        message: 'Kap cannot access the microphone.',
+        detail: 'Audio recording is enabled but Kap does not have access to the microphone. Continue without audio or grant Kap access to the microphone the System Preferences.',
+        cancelId: 2
+      });
+
+      if (response === 0) {
+        openSystemPreferences();
+        return false;
+      }
+
+      if (response === 1) {
+        settings.set('recordAudio', false);
+        return true;
+      }
+
+      return false;
+    });
+
+    if (!granted) {
+      return;
+    }
+  }
 
   const {screen} = electron;
   const displays = screen.getAllDisplays();

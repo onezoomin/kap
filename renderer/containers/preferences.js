@@ -1,6 +1,7 @@
 import electron from 'electron';
 import {Container} from 'unstated';
 import delay from 'delay';
+import {ipcRenderer as ipc} from 'electron-better-ipc';
 
 const SETTINGS_ANALYTICS_BLACKLIST = ['kapturesDir'];
 
@@ -9,20 +10,18 @@ export default class PreferencesContainer extends Container {
 
   state = {
     category: 'general',
-    tab: 'discover'
+    tab: 'discover',
+    isMounted: false
   }
 
   mount = async setOverlay => {
     this.setOverlay = setOverlay;
     this.settings = this.remote.require('./common/settings');
+    this.systemPermissions = this.remote.require('./common/system-permissions');
     this.plugins = this.remote.require('./common/plugins');
     this.track = this.remote.require('./common/analytics').track;
-    this.ipc = require('electron-better-ipc').ipcRenderer;
 
     const pluginsInstalled = this.plugins.getInstalled().sort((a, b) => a.prettyName.localeCompare(b.prettyName));
-
-    const {getAudioDevices} = this.remote.require('./common/aperture');
-    const {audioInputDeviceId} = this.settings.store;
 
     await this.fetchFromNpm();
 
@@ -33,20 +32,27 @@ export default class PreferencesContainer extends Container {
       isMounted: true
     });
 
-    (async () => {
-      const audioDevices = await getAudioDevices();
-      const updates = {audioDevices};
+    if (this.settings.store.recordAudio) {
+      this.getAudioDevices();
+    }
+  }
 
-      if (!audioDevices.some(device => device.id === audioInputDeviceId)) {
-        const [device] = audioDevices;
-        if (device) {
-          this.settings.set('audioInputDeviceId', device.id);
-          updates.audioInputDeviceId = device.id;
-        }
+  getAudioDevices = async () => {
+    const {getAudioDevices} = this.remote.require('./common/aperture');
+    const {audioInputDeviceId} = this.settings.store;
+
+    const audioDevices = await getAudioDevices();
+    const updates = {audioDevices};
+
+    if (!audioDevices.some(device => device.id === audioInputDeviceId)) {
+      const [device] = audioDevices;
+      if (device) {
+        this.settings.set('audioInputDeviceId', device.id);
+        updates.audioInputDeviceId = device.id;
       }
+    }
 
-      this.setState(updates);
-    })();
+    this.setState(updates);
   }
 
   setNavigation = ({category, tab}) => this.setState({category, tab})
@@ -56,7 +62,13 @@ export default class PreferencesContainer extends Container {
       const plugins = await this.plugins.getFromNpm();
       this.setState({
         npmError: false,
-        pluginsFromNpm: plugins.sort((a, b) => a.prettyName.localeCompare(b.prettyName))
+        pluginsFromNpm: plugins.sort((a, b) => {
+          if (a.isCompatible !== b.isCompatible) {
+            return b.isCompatible - a.isCompatible;
+          }
+
+          return a.prettyName.localeCompare(b.prettyName);
+        })
       });
     } catch (error) {
       this.setState({npmError: true});
@@ -75,9 +87,13 @@ export default class PreferencesContainer extends Container {
       plugin.isValid = isValid;
       plugin.hasConfig = hasConfig;
       this.setState({
-        pluginBeingInstalled: null,
+        pluginBeingInstalled: undefined,
         pluginsFromNpm: pluginsFromNpm.filter(p => p.name !== name),
         pluginsInstalled: [plugin, ...pluginsInstalled].sort((a, b) => a.prettyName.localeCompare(b.prettyName))
+      });
+    } else {
+      this.setState({
+        pluginBeingInstalled: undefined
       });
     }
   }
@@ -139,16 +155,30 @@ export default class PreferencesContainer extends Container {
     this.settings.set(setting, newVal);
   }
 
+  toggleRecordAudio = async () => {
+    const newVal = !this.state.recordAudio;
+    this.track(`preferences/setting/recordAudio/${newVal}`);
+
+    if (!newVal || await this.systemPermissions.ensureMicrophonePermissions()) {
+      if (newVal) {
+        await this.getAudioDevices();
+      }
+
+      this.setState({recordAudio: newVal});
+      this.settings.set('recordAudio', newVal);
+    }
+  }
+
   toggleShortcuts = async () => {
     const setting = 'recordKeyboardShortcut';
     const newVal = !this.state[setting];
     this.toggleSetting(setting, newVal);
-    await this.ipc.callMain('toggle-shortcuts', {enabled: newVal});
+    await ipc.callMain('toggle-shortcuts', {enabled: newVal});
   }
 
   updateShortcut = async (setting, shortcut) => {
     try {
-      await this.ipc.callMain('update-shortcut', {setting, shortcut});
+      await ipc.callMain('update-shortcut', {setting, shortcut});
       this.setState({[setting]: shortcut});
     } catch (error) {
       console.warn('Error updating shortcut', error);
@@ -166,7 +196,7 @@ export default class PreferencesContainer extends Container {
   pickKapturesDir = () => {
     const {dialog, getCurrentWindow} = this.remote;
 
-    const directories = dialog.showOpenDialog(getCurrentWindow(), {
+    const directories = dialog.showOpenDialogSync(getCurrentWindow(), {
       properties: [
         'openDirectory',
         'createDirectory'

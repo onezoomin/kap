@@ -5,11 +5,12 @@ const got = require('got');
 const execa = require('execa');
 const makeDir = require('make-dir');
 const {ipcMain: ipc} = require('electron-better-ipc');
+const packageJson = require('package-json');
+const {satisfies} = require('semver');
 
 const {app, Notification} = electron;
 
 const Plugin = require('../plugin');
-const {updateExportOptions} = require('../export-options');
 const {openConfigWindow} = require('../config');
 const {openPrefsWindow} = require('../preferences');
 const {notify} = require('./notifications');
@@ -17,8 +18,13 @@ const {track} = require('./analytics');
 
 class Plugins {
   constructor() {
-    this.npmBin = path.join(__dirname, '../../node_modules/npm/bin/npm-cli.js');
+    this.yarnBin = path.join(__dirname, '../../node_modules/yarn/bin/yarn.js');
     this._makePluginsDir();
+    this.appVersion = app.getVersion();
+  }
+
+  setUpdateExportOptions(updateExportOptions) {
+    this.updateExportOptions = updateExportOptions;
   }
 
   _makePluginsDir() {
@@ -40,8 +46,8 @@ class Plugins {
     fs.writeFileSync(this.pkgPath, JSON.stringify(pkg));
   }
 
-  async _runNpm(...commands) {
-    await execa(process.execPath, [this.npmBin, ...commands], {
+  async _runYarn(...commands) {
+    await execa(process.execPath, [this.yarnBin, ...commands], {
       cwd: this.cwd,
       env: {
         ELECTRON_RUN_AS_NODE: 1
@@ -62,8 +68,8 @@ class Plugins {
     return Object.keys(JSON.parse(pkg).dependencies);
   }
 
-  async _npmInstall() {
-    await this._runNpm('install', '--no-package-lock', '--registry', 'https://registry.npmjs.org');
+  async _yarnInstall() {
+    await this._runYarn('install', '--no-lockfile', '--registry', 'https://registry.npmjs.org');
   }
 
   async install(name) {
@@ -75,7 +81,7 @@ class Plugins {
     });
 
     try {
-      await this._npmInstall();
+      await this._yarnInstall();
 
       const plugin = new Plugin(name);
       const isValid = plugin.isConfigValid();
@@ -110,7 +116,7 @@ class Plugins {
       }
 
       notification.show();
-      updateExportOptions();
+      this.updateExportOptions();
 
       return {hasConfig, isValid};
     } catch (error) {
@@ -123,7 +129,7 @@ class Plugins {
   }
 
   async upgrade() {
-    await this._npmInstall();
+    await this._yarnInstall();
   }
 
   uninstall(name) {
@@ -133,11 +139,11 @@ class Plugins {
     });
     const plugin = new Plugin(name);
     plugin.config.clear();
-    updateExportOptions();
+    this.updateExportOptions();
   }
 
   async prune() {
-    await this._runNpm('prune');
+    await this._yarnInstall();
   }
 
   getServices(pluginName) {
@@ -145,15 +151,44 @@ class Plugins {
   }
 
   getInstalled() {
-    return this._pluginNames().map(name => {
-      const pluginPath = this._pluginPath(name, 'package.json');
-      const json = JSON.parse(fs.readFileSync(pluginPath, 'utf8'));
-      const plugin = new Plugin(name);
-      json.prettyName = this._getPrettyName(name);
-      json.hasConfig = this.getServices(name).some(({config = {}}) => Object.keys(config).length > 0);
-      json.isValid = plugin.isConfigValid();
-      return json;
-    });
+    try {
+      return this._pluginNames().map(name => {
+        const pluginPath = this._pluginPath(name, 'package.json');
+        const json = JSON.parse(fs.readFileSync(pluginPath, 'utf8'));
+        const plugin = new Plugin(name);
+        return {
+          ...json,
+          pluginPath: this._pluginPath(name),
+          prettyName: this._getPrettyName(name),
+          hasConfig: this.getServices(name).some(({config = {}}) => Object.keys(config).length > 0),
+          isValid: plugin.isConfigValid(),
+          kapVersion: json.kapVersion || '*',
+          isCompatible: satisfies(this.appVersion, json.kapVersion || '*'),
+          isInstalled: true,
+          isSymlink: fs.lstatSync(this._pluginPath(name)).isSymbolicLink()
+        };
+      });
+    } catch (error) {
+      const Sentry = require('../utils/sentry');
+      Sentry.captureException(error);
+      return [];
+    }
+  }
+
+  getBuiltIn() {
+    return [{
+      pluginPath: './plugins/copy-to-clipboard-plugin',
+      isCompatible: true,
+      name: '_copyToClipboard'
+    }, {
+      pluginPath: './plugins/save-file-plugin',
+      isCompatible: true,
+      name: '_saveToDisk'
+    }, {
+      pluginPath: './plugins/open-with-plugin',
+      isCompatible: true,
+      name: '_openWith'
+    }];
   }
 
   async getFromNpm() {
@@ -161,11 +196,19 @@ class Plugins {
     const response = await got(url, {json: true});
     const installed = this._pluginNames();
 
-    return response.body.results
+    return Promise.all(response.body.results
       .map(x => x.package)
       .filter(x => x.name.startsWith('kap-'))
       .filter(x => !installed.includes(x.name)) // Filter out installed plugins
-      .map(x => ({...x, prettyName: this._getPrettyName(x.name)}));
+      .map(async x => {
+        const {kapVersion = '*'} = await packageJson(x.name, {fullMetadata: true});
+        return {
+          ...x,
+          kapVersion,
+          prettyName: this._getPrettyName(x.name),
+          isCompatible: satisfies(this.appVersion, kapVersion)
+        };
+      }));
   }
 
   getPluginService(pluginName, serviceTitle) {

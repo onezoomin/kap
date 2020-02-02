@@ -1,6 +1,7 @@
 import React from 'react';
 import Head from 'next/head';
 import {Provider} from 'unstated';
+import {ipcRenderer as ipc} from 'electron-better-ipc';
 
 import Editor from '../components/editor';
 import Options from '../components/editor/options';
@@ -16,8 +17,6 @@ export default class EditorPage extends React.Component {
   wasPaused = false;
 
   componentDidMount() {
-    const {ipcRenderer: ipc} = require('electron-better-ipc');
-
     ipc.answerMain('file', async ({filePath, fps, originalFilePath, isNewRecording}) => {
       await new Promise((resolve, reject) => {
         editorContainer.mount(filePath, parseInt(fps, 10), originalFilePath, isNewRecording, resolve, reject);
@@ -78,6 +77,7 @@ export default class EditorPage extends React.Component {
             --slider-popup-background: rgba(255, 255, 255, 0.85);
             --slider-background-color: #ffffff;
             --slider-thumb-color: #ffffff;
+            --background-color: #222222;
           }
 
           .dark {

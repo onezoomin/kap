@@ -1,14 +1,11 @@
 
-const path = require('path');
-const fs = require('fs');
-const electron = require('electron');
 const Store = require('electron-store');
 const {ipcMain: ipc} = require('electron-better-ipc');
-const makeDir = require('make-dir');
 
-const {app} = electron;
+const plugins = require('./common/plugins');
 const {converters} = require('./convert');
 const {setOptions, getEditors} = require('./editor');
+const {apps} = require('./plugins/open-with-plugin');
 
 const exportUsageHistory = new Store({
   name: 'export-usage-history',
@@ -32,36 +29,39 @@ const prettifyFormat = format => {
 };
 
 const getExportOptions = () => {
-  const cwd = path.join(app.getPath('userData'), 'plugins');
-  const packageJsonPath = path.join(cwd, 'package.json');
-
-  if (!fs.existsSync(packageJsonPath)) {
-    makeDir.sync(cwd);
-    fs.writeFileSync(packageJsonPath, '{"dependencies":{}}');
-  }
-
-  const pkg = fs.readFileSync(packageJsonPath, 'utf8');
-  const pluginNames = Object.keys(JSON.parse(pkg).dependencies);
+  const installed = plugins.getInstalled();
+  const builtIn = plugins.getBuiltIn();
 
   const options = [];
   for (const format of converters.keys()) {
     options.push({
       format,
       prettyFormat: prettifyFormat(format),
-      plugins: [{
-        title: 'Save to Disk',
-        pluginName: 'default',
-        isDefault: true
-      }]
+      plugins: []
     });
   }
 
-  for (const pluginName of pluginNames) {
-    const plugin = require(path.join(cwd, 'node_modules', pluginName));
-    for (const service of plugin.shareServices) {
-      for (const format of service.formats) {
-        options.find(option => option.format === format).plugins.push({title: service.title, pluginName});
+  for (const json of [...installed, ...builtIn]) {
+    if (!json.isCompatible) {
+      continue;
+    }
+
+    try {
+      const plugin = require(json.pluginPath);
+
+      for (const service of plugin.shareServices) {
+        for (const format of service.formats) {
+          options.find(option => option.format === format).plugins.push({
+            title: service.title,
+            pluginName: json.name,
+            pluginPath: json.pluginPath,
+            apps: json.name === '_openWith' ? apps.get(format) : undefined
+          });
+        }
       }
+    } catch (error) {
+      const Sentry = require('./utils/sentry');
+      Sentry.captureException(error);
     }
   }
 
@@ -86,6 +86,8 @@ const updateExportOptions = () => {
   setOptions(exportOptions);
 };
 
+plugins.setUpdateExportOptions(updateExportOptions);
+
 ipc.answerRenderer('update-usage', ({format, plugin}) => {
   const usage = exportUsageHistory.get(format);
   const now = Date.now();
@@ -96,9 +98,12 @@ ipc.answerRenderer('update-usage', ({format, plugin}) => {
   updateExportOptions();
 });
 
-setOptions(getExportOptions());
+const initializeExportOptions = () => {
+  setOptions(getExportOptions());
+};
 
 module.exports = {
   getExportOptions,
-  updateExportOptions
+  updateExportOptions,
+  initializeExportOptions
 };
