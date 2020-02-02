@@ -1,11 +1,14 @@
-import React from 'react';
-import PropTypes from 'prop-types';
-import css from 'styled-jsx/css';
-import {connect, EditorContainer} from '../../../containers';
-import KeyboardNumberInput from '../../keyboard-number-input';
-import Slider from './slider';
+import React from "react";
+import PropTypes from "prop-types";
+import css from "styled-jsx/css";
+import { connect, EditorContainer } from "../../../containers";
+import KeyboardNumberInput from "../../keyboard-number-input";
+import Slider from "./slider";
 
-const {className: keyboardInputClass, styles: keyboardInputStyles} = css.resolve`
+const {
+  className: keyboardInputClass,
+  styles: keyboardInputStyles
+} = css.resolve`
   height: 24px;
   background: rgba(255, 255, 255, 0.1);
   text-align: center;
@@ -36,19 +39,27 @@ const {className: keyboardInputClass, styles: keyboardInputStyles} = css.resolve
 
 class LeftOptions extends React.Component {
   handleBlur = event => {
-    const {changeDimension} = this.props;
-    changeDimension(event, {ignoreEmpty: false});
-  }
+    const { changeDimension } = this.props;
+    changeDimension(event, { ignoreEmpty: false });
+  };
 
   render() {
-    const {width, height, changeDimension, fps, originalFps, setFps, original} = this.props;
+    const {
+      width,
+      height,
+      changeDimension,
+      fps, // TODO link this to the default from settings
+      originalFps,
+      setFps,
+      original
+    } = this.props;
 
     return (
       <div className="container">
         <div className="label">Size</div>
         <KeyboardNumberInput
           className={keyboardInputClass}
-          value={width || ''}
+          value={width || ""}
           size="5"
           min={1}
           max={original && original.width}
@@ -59,7 +70,7 @@ class LeftOptions extends React.Component {
         />
         <KeyboardNumberInput
           className={keyboardInputClass}
-          value={height || ''}
+          value={height || ""}
           size="5"
           min={1}
           max={original && original.height}
@@ -68,9 +79,12 @@ class LeftOptions extends React.Component {
           onKeyDown={changeDimension}
           onBlur={this.handleBlur}
         />
-        <div className="label">FPS</div>
+        <div className="label">Playback FPS</div>
         <div className="fps">
-          <Slider value={fps} min={1} max={originalFps} onChange={setFps}/>
+          <Slider value={fps} min={1} max={originalFps * 2} onChange={setFps} />
+        </div>
+        <div className="label">
+          <b>{`${(fps / originalFps).toFixed(2)}x`}</b>
         </div>
         {keyboardInputStyles}
         <style jsx>{`
@@ -132,6 +146,12 @@ LeftOptions.propTypes = {
 
 export default connect(
   [EditorContainer],
-  ({width, height, fps, originalFps, original}) => ({width, height, fps, originalFps, original}),
-  ({changeDimension, setFps}) => ({changeDimension, setFps})
+  ({ width, height, fps, originalFps, original }) => ({
+    width,
+    height,
+    fps,
+    originalFps,
+    original
+  }),
+  ({ changeDimension, setFps }) => ({ changeDimension, setFps })
 )(LeftOptions);
