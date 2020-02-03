@@ -1,9 +1,9 @@
-import React from "react";
-import PropTypes from "prop-types";
-import css from "styled-jsx/css";
-import { connect, EditorContainer } from "../../../containers";
-import KeyboardNumberInput from "../../keyboard-number-input";
-import Slider from "./slider";
+import React from 'react';
+import PropTypes from 'prop-types';
+import css from 'styled-jsx/css';
+import {connect, EditorContainer} from '../../../containers';
+import KeyboardNumberInput from '../../keyboard-number-input';
+import Slider from './slider';
 
 const {
   className: keyboardInputClass,
@@ -39,8 +39,8 @@ const {
 
 class LeftOptions extends React.Component {
   handleBlur = event => {
-    const { changeDimension } = this.props;
-    changeDimension(event, { ignoreEmpty: false });
+    const {changeDimension} = this.props;
+    changeDimension(event, {ignoreEmpty: false});
   };
 
   render() {
@@ -59,7 +59,7 @@ class LeftOptions extends React.Component {
         <div className="label">Size</div>
         <KeyboardNumberInput
           className={keyboardInputClass}
-          value={width || ""}
+          value={width || ''}
           size="5"
           min={1}
           max={original && original.width}
@@ -70,7 +70,7 @@ class LeftOptions extends React.Component {
         />
         <KeyboardNumberInput
           className={keyboardInputClass}
-          value={height || ""}
+          value={height || ''}
           size="5"
           min={1}
           max={original && original.height}
@@ -81,7 +81,7 @@ class LeftOptions extends React.Component {
         />
         <div className="label">Playback FPS</div>
         <div className="fps">
-          <Slider value={fps} min={1} max={originalFps * 2} onChange={setFps} />
+          <Slider value={fps} min={1} max={originalFps * 2} onChange={setFps}/>
         </div>
         <div className="label">
           <b>{`${(fps / originalFps).toFixed(2)}x`}</b>
@@ -146,12 +146,12 @@ LeftOptions.propTypes = {
 
 export default connect(
   [EditorContainer],
-  ({ width, height, fps, originalFps, original }) => ({
+  ({width, height, fps, originalFps, original}) => ({
     width,
     height,
     fps,
     originalFps,
     original
   }),
-  ({ changeDimension, setFps }) => ({ changeDimension, setFps })
+  ({changeDimension, setFps}) => ({changeDimension, setFps})
 )(LeftOptions);
